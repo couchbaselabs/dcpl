@@ -1,0 +1,90 @@
+dcpl: lightweight DCP proxy
+
+
+BUILDING
+
+    git clone git@github.com:couchbaselabs/dcpl.git ~/dcpl-gopath/src/dcpl
+    export GOPATH=~/dcpl-gopath
+    cd $GOPATH/src/dcpl
+    go get                  # fetch all dependencies
+    go build                # produce binary
+
+    $ ./dcpl --help
+    Usage of ./dcpl:
+      -address string
+                interface and port to bind the server (default "localhost:12345")
+      -batch-size int
+                the maximum size of websockets frame (default 16384)
+      -cluster-uri string
+                URI of Couchbase cluster (default "couchbase://localhost/")
+      -debug
+                export pprof and expvars
+      -filter-script string
+                .ank script to filter values (bypass all event by default)
+      -repl
+                run REPL to test and debug .ank scripts
+
+
+USAGE
+
+    ./dcpl --cluster-uri="couchbase://127.0.0.1:8091/" --batch-size=SIZE_IN_BYTES
+
+where SIZE_IN_BYTES is the maximum size of websocket frame, which will be sent to the client.
+The server will try to buffer the DCP messages together to optimize bandwidth.
+
+During websocket connection initialization, it looks at two HTTP headers:
+
+'Authorization': which should hold encoded basic authorization, where username will be used
+as a bucket and password for its password.
+
+'X-Partition-Range': can be one of:
+
+* "1,2,3,4-10,11" etc., where each number partition (vbucket)
+
+* "auto:N": where N is index of node in cluster. The dcpl will look into the
+  cluster config, fetch all vbuckets for the server with this index, and select these
+  vbuckets to listen.
+
+The server by default registers two endpoints for different protocols: Websockets and HTTP.
+The following commands do the same thing: fetch all documents from the unprotected bucket
+'beer-sample':
+
+    curl -v -N -u'beer-sample:' http://localhost:12345/ws/ \
+               -H "Connection: Upgrade" \
+               -H "Upgrade: websocket" \
+               -H "Sec-Websocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+               -H "Sec-Websocket-Version: 13"
+
+    curl -v -N -u'beer-sample:' -N http://localhost:12345/http/
+
+The server also supports several modes in regard of stream boundaries through 'X-Direction'
+header. It could accept three values:
+
+* 'everything' -- start from the beginning, and listen forever (default)
+* 'from_now'   -- start from current state, and listen forever
+* 'till_now'   -- start from the beginning, and listen until current state
+
+So if you want to dump through websocket all new breweries (in terms of one of the sample
+buckets of Couchbase Server), you would need to start server like this:
+
+    ./dcpl --filter-script examples/breweries.ank
+
+and for client use this curl incantation:
+
+    curl -v -N -u'beer-sample:' http://localhost:12345/ws/ \
+               -H "Connection: Upgrade" \
+               -H "Upgrade: websocket" \
+               -H "Sec-Websocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+               -H "Sec-Websocket-Version: 13"
+               -H "X-Direction: from_now"
+
+after that try to create new brewery, for example with cbc:
+
+    cbc create test -V '{"name":"Test","type":"brewery"}'
+
+
+ANKO scripting
+
+The server has embedded scripting language Anko (https://github.com/mattn/anko).
+It used to supply user-defined algorithms. For example to filter incoming events.
+To run interactive ANKO console, use switch --repl.

@@ -1,0 +1,25 @@
+# DCP events exposed as variable 'event'
+# of the following type.
+#
+#   type Event struct {
+#     Type  string
+#     Key   string
+#     Value []byte
+#   }
+#
+
+json = import("json")
+
+func filter(event) {
+  if event.Type != "mutation" {
+     return false
+  }
+  val, err = json.Unmarshal(event.Value)
+  if err != nil {
+     return false
+  }
+  return val.type == "brewery"
+}
+
+# the script should return boolean
+filter(event)
