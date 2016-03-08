@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -34,13 +33,15 @@ import (
 const batchChunkSeparator byte = '\n'
 
 func checkAuth(config *websocket.Config, req *http.Request) (err error) {
-	_, _, ok := req.BasicAuth()
-	if !ok {
-		err := errors.New("missing basic auth credentials")
-		log.Println(err)
-		return err
-	}
+	// TODO: authorize client
 	return nil
+}
+
+type Params struct {
+	bucket     string
+	password   string
+	partitions string
+	direction  string
 }
 
 const (
@@ -204,21 +205,21 @@ func writeToWebsocket(ws *websocket.Conn, bytes []byte) error {
 	return err
 }
 
-func listenCouchbase(bucketName, password, partitions, direction string, state *State, handler func()) {
+func listenCouchbase(params Params, state *State, handler func()) {
 	cluster, err := gocb.Connect(clusterURI)
 	if err != nil {
 		log.Printf("failed to connect to cluster: %v", err)
 		return
 	}
 	var connectionName string
-	if len(partitions) > 20 {
-		connectionName = fmt.Sprintf("DCPL[%d/%s]", rand.Int(), partitions[0:20])
+	if len(params.partitions) > 20 {
+		connectionName = fmt.Sprintf("DCPL[%d/%s]", rand.Int(), params.partitions[0:20])
 	} else {
-		connectionName = fmt.Sprintf("DCPL[%d/%s]", rand.Int(), partitions)
+		connectionName = fmt.Sprintf("DCPL[%d/%s]", rand.Int(), params.partitions)
 	}
-	bucket, err := cluster.OpenStreamingBucket(connectionName, bucketName, password)
+	bucket, err := cluster.OpenStreamingBucket(connectionName, params.bucket, params.password)
 	if err != nil {
-		log.Printf("failed to open the bucket %q: %v", bucketName, err)
+		log.Printf("failed to open the bucket %q: %v", params.bucket, err)
 		return
 	}
 	state.bucket = bucket
@@ -229,8 +230,8 @@ func listenCouchbase(bucketName, password, partitions, direction string, state *
 		snapStartSeqNo gocbcore.SeqNo
 		snapEndSeqNo   gocbcore.SeqNo
 	}
-	direction = parseDirection(direction)
-	partitionsRange := parseRange(partitions, bucket)
+	direction := parseDirection(params.direction)
+	partitionsRange := parseRange(params.partitions, bucket)
 	for _, p := range partitionsRange {
 		pid := p
 		stream := state.NewStream(p)
@@ -324,11 +325,9 @@ func onConnected(ws *websocket.Conn) {
 	}()
 
 	streamState := NewStateWS(ws)
-	bucket, password, _ := ws.Request().BasicAuth()
-	partitions := ws.Request().Header.Get("X-Partition-Range")
-	direction := ws.Request().Header.Get("X-Direction")
+	params := extractParams(ws.Request())
 	done := make(chan bool)
-	go listenCouchbase(bucket, password, partitions, direction, streamState,
+	go listenCouchbase(params, streamState,
 		func() {
 			var buf bytes.Buffer
 			for {
@@ -422,15 +421,43 @@ func parseRange(spec string, bucket *gocb.StreamingBucket) []uint16 {
 	return keys
 }
 
+func extractParams(r *http.Request) Params {
+	query := r.URL.Query()
+	params := Params{
+		bucket:     query.Get("bucket"),
+		password:   query.Get("password"),
+		partitions: query.Get("partitions"),
+		direction:  query.Get("direction"),
+	}
+
+	// overwrite params from headers
+	bucket, password, _ := r.BasicAuth()
+	if bucket != "" {
+		params.bucket = bucket
+	}
+	if password != "" {
+		params.password = password
+	}
+	partitions := r.Header.Get("X-Partition-Range")
+	if partitions != "" {
+		params.partitions = partitions
+	}
+	direction := r.Header.Get("X-Direction")
+	if direction != "" {
+		params.direction = direction
+	}
+
+	return params
+}
+
 func httpHandler(w http.ResponseWriter, r *http.Request) {
 	streamState := NewState()
-	bucket, password, _ := r.BasicAuth()
-	partitions := r.Header.Get("X-Partition-Range")
-	direction := r.Header.Get("X-Direction")
+
+	params := extractParams(r)
 	w.Header().Add("Content-Type", "application/json")
 	flusher := w.(http.Flusher)
 	flusher.Flush()
-	listenCouchbase(bucket, password, partitions, direction, streamState,
+	listenCouchbase(params, streamState,
 		func() {
 			for {
 				select {

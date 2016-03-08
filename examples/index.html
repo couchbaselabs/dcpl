@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8" />
+        <title>DCPL demo</title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.2.0/jquery.min.js"></script>
+        <script>
+         var i = 0;
+         $(function() {
+             $('#connect').click(function(){
+                 params = {
+                     bucket: $('#bucket').val(),
+                     password: $('#password').val(),
+                     partitions: $('#partitions').val(),
+                     direction: $('.direction:checked').val()
+                 }
+                 var ws = new WebSocket("ws://localhost:12345/ws/?" + $.param(params));
+                 var events = $('#events');
+                 events.empty();
+                 i = 0;
+                 ws.onmessage = function(e) {
+                     events.prepend(i + ". " + e.data);
+                     i++;
+                 };
+             });
+         });
+        </script>
+    </head>
+    <body>
+        <table>
+            <tr>
+                <td>
+                    <label for="bucket">bucket:</label>
+                </td>
+                <td>
+                    <input id="bucket" type="text" value="beer-sample"/>
+                </td>
+            </tr>
+            <tr>
+                <td>
+                    <label for="password">password:</label>
+                </td>
+                <td>
+                    <input id="password" type="text" />
+                </td>
+            </tr>
+            <tr>
+                <td>
+                    <label for="partitions">partitions:</label>
+                </td>
+                <td>
+                    <input id="partitions" type="text" value="115" />
+                </td>
+            </tr>
+            <tr>
+                <td>
+                    direction:
+                </td>
+                <td>
+                    <label><input class="direction" type="radio" name="direction" value="everything" checked/>everything</label></br>
+                    <label><input class="direction" type="radio" name="direction" value="from_now"/>from_now</label></br>
+                    <label><input class="direction" type="radio" name="direction" value="till_now"/>till_now</label></br>
+                </td>
+            </tr>
+        </table>
+        <input type="button" id="connect" value="connect"></input>
+        <pre id="events"></ul>
+    </body>
+</html>
