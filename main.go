@@ -231,7 +231,35 @@ func listenCouchbase(params Params, state *State, handler func()) {
 		snapEndSeqNo   gocbcore.SeqNo
 	}
 	direction := parseDirection(params.direction)
+
+	agent := bucket.IoRouter()
+	numServers := agent.NumServers()
 	partitionsRange := parseRange(params.partitions, bucket)
+	partitionsState := make([]partitionState, agent.NumVbuckets())
+	for i := 0; i < numServers; i++ {
+		_, err = agent.GetVbucketSeqnos(i, func(vbId uint16, lastSeqno gocbcore.SeqNo, err error) {
+			if err != nil {
+				log.Printf("failed to get last checkpoint for server %d: %v", i, err)
+				return
+			}
+			switch direction {
+			case DIRECTION_FROM_CURRENT:
+				partitionsState[vbId] = partitionState{
+					startSeqNo:     lastSeqno,
+					endSeqNo:       0xffffffff,
+					snapStartSeqNo: lastSeqno,
+					snapEndSeqNo:   0xffffffff,
+				}
+			case DIRECTION_TO_CURRENT:
+				partitionsState[vbId] = partitionState{
+					startSeqNo:     0,
+					endSeqNo:       lastSeqno,
+					snapStartSeqNo: 0,
+					snapEndSeqNo:   lastSeqno,
+				}
+			}
+		})
+	}
 	for _, p := range partitionsRange {
 		pid := p
 		stream := state.NewStream(p)
@@ -242,74 +270,38 @@ func listenCouchbase(params Params, state *State, handler func()) {
 			snapStartSeqNo: 0,
 			snapEndSeqNo:   0,
 		}
-		agent := bucket.IoRouter()
 		if direction != DIRECTION_EVERYTHING {
+			ps = partitionsState[pid]
+			agent := bucket.IoRouter()
 			_, err = agent.GetFailoverLog(pid, func(flog []gocbcore.FailoverEntry, err error) {
 				if err != nil {
 					log.Printf("failed to get failover log for vbucket %d: %v", pid, err)
 					return
 				}
 				ps.vbUuid = flog[0].VbUuid
-				_, err = agent.GetLastCheckpoint(pid, func(lastSeqno gocbcore.SeqNo, err error) {
-					if err != nil {
-						log.Printf("failed to get last checkpoint for vbucket %d: %v", pid, err)
-						return
-					}
-					switch direction {
-					case DIRECTION_FROM_CURRENT:
-						ps.startSeqNo = lastSeqno
-						ps.endSeqNo = 0xffffffff
-						ps.snapStartSeqNo = lastSeqno
-						ps.snapEndSeqNo = 0xffffffff
-					case DIRECTION_TO_CURRENT:
-						ps.startSeqNo = 0
-						ps.endSeqNo = lastSeqno
-						ps.snapStartSeqNo = 0
-						ps.snapEndSeqNo = lastSeqno
-					}
-					_, err = agent.OpenStream(pid,
-						ps.vbUuid,
-						ps.startSeqNo,
-						ps.endSeqNo,
-						ps.snapStartSeqNo,
-						ps.snapEndSeqNo,
-						stream, func(slog []gocbcore.FailoverEntry, err error) {
-							if err != nil {
-								log.Printf("failed to open DCP stream for vbucket %d: %v", pid, err)
-							}
-						})
-					if err != nil {
-						log.Printf("failed to schedule open DCP stream for vbucket %d: %v", pid, err)
-						// FIXME: close opened streams or just skip failures
-					}
-				})
-				if err != nil {
-					log.Printf("failed to schedule get last checkpoint for vbucket %d: %v", pid, err)
-				}
 			})
 			if err != nil {
 				log.Printf("failed to schedule get failover log for vbucket %d: %v", pid, err)
 				return
 			}
-		} else {
-			_, err = agent.OpenStream(pid,
-				ps.vbUuid,
-				ps.startSeqNo,
-				ps.endSeqNo,
-				ps.snapStartSeqNo,
-				ps.snapEndSeqNo,
-				stream, func(slog []gocbcore.FailoverEntry, err error) {
-					if err != nil {
-						log.Printf("failed to open DCP stream for vbucket %d: %v", pid, err)
-						// FIXME: close opened streams or just skip failures
-						return
-					}
-				})
-			if err != nil {
-				log.Printf("failed to schedule open DCP stream for vbucket %d: %v", pid, err)
-				// FIXME: close opened streams or just skip failures
-				return
-			}
+		}
+		_, err = agent.OpenStream(pid,
+			ps.vbUuid,
+			ps.startSeqNo,
+			ps.endSeqNo,
+			ps.snapStartSeqNo,
+			ps.snapEndSeqNo,
+			stream, func(slog []gocbcore.FailoverEntry, err error) {
+				if err != nil {
+					log.Printf("failed to open DCP stream for vbucket %d: %v", pid, err)
+					// FIXME: close opened streams or just skip failures
+					return
+				}
+			})
+		if err != nil {
+			log.Printf("failed to schedule open DCP stream for vbucket %d: %v", pid, err)
+			// FIXME: close opened streams or just skip failures
+			return
 		}
 	}
 
