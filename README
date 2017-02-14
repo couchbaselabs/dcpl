@@ -27,7 +27,7 @@ BUILDING
 
 USAGE
 
-    ./dcpl --cluster-uri="couchbase://127.0.0.1:8091/" --batch-size=SIZE_IN_BYTES
+    ./dcpl --cluster-uri="couchbase://127.0.0.1/" --batch-size=SIZE_IN_BYTES
 
 where SIZE_IN_BYTES is the maximum size of websocket frame, which will be sent to the client.
 The server will try to buffer the DCP messages together to optimize bandwidth.

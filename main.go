@@ -26,8 +26,8 @@ import (
 	"github.com/mattn/anko/parser"
 	"github.com/mattn/anko/vm"
 
-	"github.com/couchbase/gocb"
-	"github.com/couchbase/gocb/gocbcore"
+	gocb "gopkg.in/couchbase/gocb.v1"
+	gocbcore "gopkg.in/couchbase/gocbcore.v2"
 )
 
 const batchChunkSeparator byte = '\n'
