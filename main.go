@@ -57,9 +57,17 @@ const (
 )
 
 type Event struct {
-	Type  string          `json:"event"`
-	Key   string          `json:"key"`
-	Value json.RawMessage `json:"value,omitempty"`
+	Type     string          `json:"event"`
+	Key      string          `json:"key"`
+	VbId     uint16          `json:"vbid"`
+	SeqNo    uint64          `json:"seqno"`
+	RevNo    uint64          `json:"revno"`
+	Cas      uint64          `json:"cas"`
+	Flags    uint32          `json:"flags,omitempty"`
+	LockTime uint32          `json:"locktime,omitempty"`
+	Expiry   uint32          `json:"expiry,omitempty"`
+	Datatype uint8           `json:"datatype,omitempty"`
+	Value    json.RawMessage `json:"value,omitempty"`
 }
 
 func encode(packet Event) []byte {
@@ -143,23 +151,39 @@ func (s *Stream) SnapshotMarker(startSeqNo, endSeqNo uint64, vbId uint16, snapsh
 
 func (s *Stream) Mutation(seqNo, revNo uint64, flags, expiry, lockTime uint32, cas uint64, datatype uint8, vbId uint16, key, value []byte) {
 	s.emit(Event{
-		Type:  EVENT_MUTATION,
-		Key:   string(key),
-		Value: value,
+		Type:     EVENT_MUTATION,
+		Key:      string(key),
+		VbId:     vbId,
+		SeqNo:    seqNo,
+		RevNo:    revNo,
+		Cas:      cas,
+		Flags:    flags,
+		LockTime: lockTime,
+		Expiry:   expiry,
+		Datatype: datatype,
+		Value:    value,
 	})
 }
 
 func (s *Stream) Deletion(seqNo, revNo, cas uint64, vbId uint16, key []byte) {
 	s.emit(Event{
-		Type: EVENT_DELETION,
-		Key:  string(key),
+		Type:  EVENT_DELETION,
+		Key:   string(key),
+		VbId:  vbId,
+		SeqNo: seqNo,
+		RevNo: revNo,
+		Cas:   cas,
 	})
 }
 
 func (s *Stream) Expiration(seqNo, revNo, cas uint64, vbId uint16, key []byte) {
 	s.emit(Event{
-		Type: EVENT_EXPIRATION,
-		Key:  string(key),
+		Type:  EVENT_EXPIRATION,
+		Key:   string(key),
+		VbId:  vbId,
+		SeqNo: seqNo,
+		RevNo: revNo,
+		Cas:   cas,
 	})
 }
 
