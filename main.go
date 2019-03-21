@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -27,7 +26,7 @@ import (
 	"github.com/mattn/anko/vm"
 
 	gocb "gopkg.in/couchbase/gocb.v1"
-	gocbcore "gopkg.in/couchbase/gocbcore.v2"
+	gocbcore "gopkg.in/couchbase/gocbcore.v7"
 )
 
 const batchChunkSeparator byte = '\n'
@@ -71,11 +70,11 @@ type Event struct {
 }
 
 func encode(packet Event) []byte {
-	bytes, err := json.Marshal(&packet)
+	encoded, err := json.Marshal(&packet)
 	if err != nil {
 		panic(err)
 	}
-	return bytes
+	return encoded
 }
 
 type State struct {
@@ -117,7 +116,7 @@ type Stream struct {
 	partition uint16
 	state     *State
 	env       *vm.Env
-	script    []ast.Stmt
+	script    ast.Stmt
 }
 
 func (s *Stream) emit(evt Event) {
@@ -129,21 +128,48 @@ func (s *Stream) emit(evt Event) {
 
 func (s *Stream) filter(evt Event) bool {
 	if s.script != nil {
-		s.env.Define("event", reflect.ValueOf(evt))
+		s.env.Define("event", evt)
 		v, err := vm.Run(s.script, s.env)
 		if err != nil {
 			log.Fatal(err)
 		}
-		switch v.Kind() {
-		case reflect.Bool:
-			return v.Bool()
-		case reflect.Interface, reflect.Ptr:
-			return !v.IsNil()
-		default:
-			return true
+		if v != nil {
+			return toBool(v)
 		}
+		return true
 	}
 	return true
+}
+
+func toBool(i1 interface{}) bool {
+	if i1 == nil {
+		return false
+	}
+	switch i2 := i1.(type) {
+	default:
+		return false
+	case bool:
+		return i2
+	case string:
+		return i2 == "true"
+	case int:
+		return i2 != 0
+	case *bool:
+		if i2 == nil {
+			return false
+		}
+		return *i2
+	case *string:
+		if i2 == nil {
+			return false
+		}
+		return *i2 == "true"
+	case *int:
+		if i2 == nil {
+			return false
+		}
+		return *i2 != 0
+	}
 }
 
 func (s *Stream) SnapshotMarker(startSeqNo, endSeqNo uint64, vbId uint16, snapshotType gocbcore.SnapshotState) {
@@ -165,7 +191,7 @@ func (s *Stream) Mutation(seqNo, revNo uint64, flags, expiry, lockTime uint32, c
 	})
 }
 
-func (s *Stream) Deletion(seqNo, revNo, cas uint64, vbId uint16, key []byte) {
+func (s *Stream) Deletion(seqNo, revNo, cas uint64, datatype uint8, vbId uint16, key, value []byte) {
 	s.emit(Event{
 		Type:  EVENT_DELETION,
 		Key:   string(key),
@@ -261,25 +287,28 @@ func listenCouchbase(params Params, state *State, handler func()) {
 	partitionsRange := parseRange(params.partitions, bucket)
 	partitionsState := make([]partitionState, agent.NumVbuckets())
 	for i := 0; i < numServers; i++ {
-		_, err = agent.GetVbucketSeqnos(i, func(vbId uint16, lastSeqno gocbcore.SeqNo, err error) {
+		_, err = agent.GetVbucketSeqnos(i, gocbcore.VbucketStateActive, func(entries []gocbcore.VbSeqNoEntry, err error) {
 			if err != nil {
 				log.Printf("failed to get last checkpoint for server %d: %v", i, err)
 				return
 			}
-			switch direction {
-			case DIRECTION_FROM_CURRENT:
-				partitionsState[vbId] = partitionState{
-					startSeqNo:     lastSeqno,
-					endSeqNo:       0xffffffff,
-					snapStartSeqNo: lastSeqno,
-					snapEndSeqNo:   0xffffffff,
-				}
-			case DIRECTION_TO_CURRENT:
-				partitionsState[vbId] = partitionState{
-					startSeqNo:     0,
-					endSeqNo:       lastSeqno,
-					snapStartSeqNo: 0,
-					snapEndSeqNo:   lastSeqno,
+
+			for _, vbEntry := range entries {
+				switch direction {
+				case DIRECTION_FROM_CURRENT:
+					partitionsState[vbEntry.VbId] = partitionState{
+						startSeqNo:     vbEntry.SeqNo,
+						endSeqNo:       0xffffffff,
+						snapStartSeqNo: vbEntry.SeqNo,
+						snapEndSeqNo:   0xffffffff,
+					}
+				case DIRECTION_TO_CURRENT:
+					partitionsState[vbEntry.VbId] = partitionState{
+						startSeqNo:     0,
+						endSeqNo:       vbEntry.SeqNo,
+						snapStartSeqNo: 0,
+						snapEndSeqNo:   vbEntry.SeqNo,
+					}
 				}
 			}
 		})
@@ -310,6 +339,7 @@ func listenCouchbase(params Params, state *State, handler func()) {
 			}
 		}
 		_, err = agent.OpenStream(pid,
+			gocbcore.DcpStreamAddFlagLatest|gocbcore.DcpStreamAddFlagActiveOnly,
 			ps.vbUuid,
 			ps.startSeqNo,
 			ps.endSeqNo,
@@ -494,7 +524,7 @@ var (
 	debug            bool
 	repl             bool
 	filterScriptPath string
-	filterScript     []ast.Stmt
+	filterScript     ast.Stmt
 )
 
 func main() {

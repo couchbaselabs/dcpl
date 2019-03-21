@@ -8,17 +8,18 @@
 #   }
 #
 
-json = import("json")
-
+json = import("encoding/json")
 func filter(event) {
   if event.Type != "mutation" {
-     return false
+     return true
   }
-  val, err = json.Unmarshal(event.Value)
+
+  val = ""
+  err = json.Unmarshal(event.Value, &val)
   if err != nil {
-     return false
+     return true
   }
-  return val.type == "brewery"
+  return val.item_type == "brewery"
 }
 
 # the script should return boolean
